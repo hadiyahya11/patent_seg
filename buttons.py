@@ -4,6 +4,10 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Button
+import ast
+
+
+
 
 # Get data that I want to segment
 
@@ -105,11 +109,20 @@ def on_button_click(event, path, contours, data, plt_fig, button_data):
     elif event.inaxes == button_data['reject_button'].ax:
         valid = 0
     
+    l = []
+    for contour in contours:
+        x, y, w, h = cv2.boundingRect(contour)
+        l.append([x, y, w, h])
     # Append the result to the existing DataFrame
-    data.loc[len(data)] = [path, contours, valid]
+        # Assuming 'df' is your DataFrame
+    
+    
+    data.loc[len(data)] = [path, l, valid,(cv2.imread(path).shape[0],cv2.imread(path).shape[1])]
+  
+    
     
     # Save the results to a CSV file
-    data.to_csv('/Users/mac/Desktop/patent_seg/segment.csv', index=False)
+    data.to_csv('/Users/mac/Desktop/patent_seg/new_seg.csv', index=False)
     
     # Close the current plot window and stop event loop
     plt_fig.canvas.stop_event_loop()
@@ -149,7 +162,7 @@ def annotate(data):
         except StopIteration:
             print("Annotation process completed.")
             # Save the final DataFrame to the CSV file
-            data.to_csv('/Users/mac/Desktop/patent_seg/segment.csv', index=False)
+            data.to_csv('/Users/mac/Desktop/patent_seg/new_seg.csv', index=False)
 
     # Start the annotation with the first image
     next_image()
@@ -159,10 +172,10 @@ if __name__ == "__main__":
     dev_plates_dataset = './dataset-dev/plates'
     
     # Create a CSV file with the columns Image, Contours, valid if it does not exist
-    if not os.path.exists('/Users/mac/Desktop/patent_seg/segment.csv'):
-        results = pd.DataFrame(columns=['Image', 'Contours', 'valid'])
+    if not os.path.exists('/Users/mac/Desktop/patent_seg/new_seg.csv'):
+        results = pd.DataFrame(columns=['Image', 'bbox', 'valid', 'image_shape'])
     else:
-        results = pd.read_csv('/Users/mac/Desktop/patent_seg/segment.csv')
+        results = pd.read_csv('/Users/mac/Desktop/patent_seg/new_seg.csv')
     
     # Load all image paths in the dataset
     all_image_paths = [os.path.join(dev_plates_dataset, _pl) for _pl in os.listdir(dev_plates_dataset) if _pl.startswith("GB.")]
