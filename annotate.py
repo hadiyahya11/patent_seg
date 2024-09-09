@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.7.17"
+__generated_with = "0.8.7"
 app = marimo.App()
 
 
@@ -126,26 +126,27 @@ def __(bounding_box_to_contour, cv2, is_contour_inside, np, process):
 
 
 @app.cell
-def __(os, pd):
-    dev_plates_dataset = './dataset-dev/plates'
-    # Create a CSV file with the columns Image, Contours, valid if it does not exist
-    results = pd.DataFrame()
-    if not os.path.exists('/Users/mac/Desktop/patent_seg/marimo_seg.csv'):
-        results = pd.DataFrame(columns=['Image','Contours','valid'])
-    else:
-        results = pd.read_csv('/Users/mac/Desktop/patent_seg/marimo_seg.csv')
-
-    gb_paths = [os.path.join(dev_plates_dataset, _pl) for _pl in 
-    os.listdir(dev_plates_dataset) if (_pl.startswith("GB."))]
-    if len(results)!=0:
-        gb_paths = [path for path in gb_paths if path not in results['Image'].values]
-    return dev_plates_dataset, gb_paths, results
+def __():
+    OUTFILE = 'seg_nc_2.csv'
+    return OUTFILE,
 
 
 @app.cell
-def __(gb_paths):
-    gb_paths_iter = iter(gb_paths)
-    return gb_paths_iter,
+def __(OUTFILE, os, pd):
+    dev_plates_dataset = './dataset-dev/plates'
+    # Create a CSV file with the columns Image, Contours, valid if it does not exist
+    results = pd.DataFrame()
+    if not os.path.exists(OUTFILE):
+        results = pd.DataFrame(columns=['Image','Contours','valid'])
+    else:
+        results = pd.read_csv(OUTFILE)
+
+    gb_paths = [os.path.join(dev_plates_dataset, _pl) for _pl in 
+    os.listdir(dev_plates_dataset) if (_pl.startswith("GB."))]
+    validated = set(results['Image'].values)
+    if len(results)!=0:
+        gb_paths = [path for path in gb_paths if path not in validated]
+    return dev_plates_dataset, gb_paths, results, validated
 
 
 @app.cell
@@ -168,13 +169,14 @@ def __(mo):
 
 
 @app.cell
-def __(mo, process_image, reject, validate):
+def __(mo, process_image, reject, validate, validated):
     def display(results):
         contours, segmented_image, path = process_image(results)
         if path is None:
             return  # Stop if no more images to process
 
-        mo.output.append(mo.image(segmented_image))
+        mo.output.append(mo.plain_text(f"{len(validated)} {path}"))
+        mo.output.append(mo.image(segmented_image, width=800))
         mo.output.append(validate)
         mo.output.append(reject)
 
@@ -183,10 +185,10 @@ def __(mo, process_image, reject, validate):
 
 
 @app.cell
-def __(gb_paths_iter, segment):
+def __(gb_paths, segment, validated):
     def process_image(results):
         try:
-            path = next(gb_paths_iter)
+            path = next(path for path in gb_paths if path not in validated)
         except StopIteration:
             print("Finished processing all images.")
             return None, None, None
@@ -195,10 +197,6 @@ def __(gb_paths_iter, segment):
         print(contours)
 
         results.loc[len(results)] = [path, contours, int(1)]
-        #gb_paths = gb_paths.remove(path)
-        # Save the results to the CSV file
-        results.to_csv("/Users/mac/Desktop/patent_seg/marimo_seg.csv", index=False)
-
         return contours, segmented_image, path
     return process_image,
 
@@ -210,20 +208,21 @@ def __(display, results):
 
 
 @app.cell
-def __(mo, reject, results, validate):
+def __(OUTFILE, mo, reject, results, validate, validated):
     mo.stop(not(validate.value or reject.value))
+    validated.add(results.iloc[-1]['Image'])
     if validate.value:
         pass
     elif reject.value:
         #access last element of results
         results.loc[results.index[-1], 'valid'] = int(0)
-        results.to_csv("/Users/mac/Desktop/patent_seg/marimo_seg.csv", index=False)
+
+    results.to_csv(OUTFILE, index=False)
+    return
 
 
-
-    # Reset the validation buttons for the next image
-        #mo.state
-    mo.output.clear()
+@app.cell
+def __():
     return
 
 
