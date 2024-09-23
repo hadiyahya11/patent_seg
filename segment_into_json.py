@@ -1,11 +1,8 @@
 import os
 import cv2
 import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-import sys
-import os
 import json
+import sys
 
 def is_contour_inside(contour1, contour2):
     x1, y1, w1, h1 = cv2.boundingRect(contour1)  # inside
@@ -30,8 +27,6 @@ def process(img):
     img_dilate = cv2.dilate(img_canny, kernel, iterations=3)
     return img_dilate
 
-
-#first phase of segmentation to remove outer border present in images
 def first_phase(img_path):
     img = cv2.imread(img_path)
     img_copy = np.copy(img)
@@ -59,15 +54,13 @@ def first_phase(img_path):
 
     white_background[new_y:new_y+biggest.shape[0], new_x:new_x+biggest.shape[1]] = biggest
 
-    return img_copy, filter_contours,white_background
+    return img_copy, filter_contours, white_background
         
-    
-def second_phase(img_first_phase,img_original):
+def second_phase(img_first_phase, img_original):
     img_copy = np.copy(img_first_phase)
     
     num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(process(img_copy), connectivity=8, ltype=cv2.CV_32S)
     contours = []
-    #area = img_copy.shape[0] * img_copy.shape[1]
     for i in range(1, num_labels):
         x, y, w, h, _ = stats[i]
         box = (x, y, w, h)
@@ -75,48 +68,41 @@ def second_phase(img_first_phase,img_original):
         contours.append(contour)
         
     filtered_contours = [contour for contour in contours if cv2.contourArea(contour) > 3000]
-    # get rid of small contours
     sorted_contours = sorted(filtered_contours, key=cv2.contourArea, reverse=True)
-    
         
-    for idx,contour in enumerate(sorted_contours):
+    for idx, contour in enumerate(sorted_contours):
         if idx == 0:
             x, y, w, h = cv2.boundingRect(contour)
             cv2.rectangle(img_original, (x, y), (x + w, y + h), (0, 0, 255), 2)
         else:
-            #x, y, w, h = cv2.boundingRect(contour)
             res = False
             for i in range(idx):
                 if is_contour_inside(contour, sorted_contours[i]):
                     res = True
                     break
-            if not res: #the contour is not inside any of the previous contours
+            if not res:
                 x, y, w, h = cv2.boundingRect(contour)
                 cv2.rectangle(img_original, (x, y), (x + w, y + h), (0, 0, 255), 2)
             
-    return img_copy, sorted_contours,img_original
-    
+    return img_copy, sorted_contours, img_original
 
 def segment(img_path):
-    img_copy, _,figure = first_phase(img_path)
-    _, contours,segmented = second_phase(figure,img_copy)
+    img_copy, _, figure = first_phase(img_path)
+    _, contours, segmented = second_phase(figure, img_copy)
 
-    return contours,segmented
+    return contours, segmented
 
-#convert to json format suitable for Label-studio
-def to_json(contours,image_path):
+def to_json(contours, image_path):
     img = cv2.imread(image_path)
     image_height, image_width, _ = img.shape
     results = []
     for i, contour in enumerate(contours):
         x, y, w, h = cv2.boundingRect(contour)
-        # Convert coordinates to percentages relative to the image size
-        x_percent = np.round((x / image_width) * 100,2)
-        y_percent = np.round((y / image_height) * 100,2)
-        width_percent = np.round((w / image_width) * 100,2)
-        height_percent = np.round((h / image_height) * 100,2)
+        x_percent = np.round((x / image_width) * 100, 2)
+        y_percent = np.round((y / image_height) * 100, 2)
+        width_percent = np.round((w / image_width) * 100, 2)
+        height_percent = np.round((h / image_height) * 100, 2)
         
-        # Create the bounding box entry
         r = {
             "id": "result" + str(i),
             "type": "rectanglelabels",
@@ -136,11 +122,14 @@ def to_json(contours,image_path):
         }
         results.append(r)
     
-    
     image_path_json = image_path[image_path.find('GB'):]
     image_path_json = image_path_json.replace('.tif', '.png')
+    #add the image file name into a text file of segmented images
+    with open('segmented_images.txt', 'a') as f:
+        f.write(image_path_json + '\n')
+        
     image_path_json = "http://localhost:8081/" + image_path_json
-    # Structure the JSON entry for this row
+    
     json_entry = {
         "data": {
             "image": image_path_json
@@ -155,25 +144,51 @@ def to_json(contours,image_path):
     }
     
     return json_entry
-    
-    
+
+
 if __name__ == "__main__":
+    if len(sys.argv) != 3:
+        print("Usage: python script.py [num_images] [direction]")
+        sys.exit(1)
+
+    num_images = int(sys.argv[1])
+    direction = int(sys.argv[2])
+
+    if direction not in [1, -1]:
+        print("Direction must be either 1 (start) or -1 (end).")
+        sys.exit(1)
+
     json_output = []
-    #get the path from the user
     data_path = 'dataset-dev/plates/'
-    gb_plates = [os.path.join(data_path, _pl) for _pl in os.listdir(data_path) if _pl.startswith("GB.")]
+    gb_plates = [os.path.join(data_path, _pl) for _pl in sorted(os.listdir(data_path)) if _pl.startswith("GB.")]
+    #open segmented_images.txt and remove the images that have already been segmented
+    segmented_images = []
+    if os.path.exists('segmented_images.txt'):
+        with open('segmented_images.txt', 'r') as f:
+            segmented_images = f.readlines()
+        segmented_images = [img.strip() for img in segmented_images]
+    else:
+        with open('segmented_images.txt', 'w') as f:
+            pass
     
-    for img_path in gb_plates[200:300]:
+    gb_plates = [plate for plate in gb_plates if plate not in segmented_images] #remove the images that have already been segmented
+    
+
+    if direction == 1:
+        selected_images = gb_plates[:num_images]
+    else:
+        selected_images = gb_plates[-num_images:]
+
+    for img_path in selected_images:
         contours, segmented = segment(img_path)
-        entry = to_json(contours,img_path)
+        entry = to_json(contours, img_path)
         json_output.append(entry)
-        
-        
+        #write img_path into segmented_images.txt
+        with open('segmented_images.txt', 'a') as f:
+            f.write(img_path + '\n')
+
     json_file_path = 'new_dataset_ml.json'
-    # Write the resulting JSON to a file
     with open(json_file_path, 'w') as jsonfile:
         json.dump(json_output, jsonfile, indent=2)
 
     print(f"JSON output saved to {json_file_path}")
-
-    

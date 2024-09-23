@@ -8,19 +8,45 @@ from deskew import determine_skew
 from scipy.ndimage import median_filter as scipy_median_filter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import multiprocessing
+from skimage import morphology, color,measure
 
-# Apply median filter on grayscale image
-def median_filter(img, size=5):
-    # Open the image as grayscale
-    image = np.array(img)
+def find_optimal_min_size(image_bin):
+    #get regions of small black holes
+    label_image = morphology.label(~image_bin)  # Invert image_bin to detect black holes as regions
+    regions = measure.regionprops(label_image)
     
-    # Apply the median filter using scipy's median_filter function
-    filtered_image = scipy_median_filter(image, size=size)
-    return filtered_image
+    # Get the size of each black hole (region)
+    hole_sizes = [region.area for region in regions]
+    
+    if not hole_sizes:
+        return 1  
+    
+    # Calculate a reasonable min_size based on hole size statistics (e.g., 75th percentile)
+    percentile_size = np.percentile(hole_sizes, 70)  
+    return int(percentile_size)
+
+# Remove small black noise from the image
+def remove_small_black_noise(image_path):
+    # Load the binary image (it's already binary with values 0 and 1)
+    im = np.array(Image.open(image_path))
+    
+    # Invert the image to treat black (0) regions as holes
+    binary_image = im.astype(bool)
+    
+    # Find the optimal min_size for the current image
+    optimal_min_size = find_optimal_min_size(binary_image)
+    
+    # Remove small black holes (fill small black regions in white areas)
+    cleaned = morphology.remove_small_holes(binary_image, area_threshold=optimal_min_size)
+    
+    # Convert the binary image back to the original format (0 and 255 for display purposes)
+    im = cleaned.astype(np.uint8) * 255
+    
+    return im
 
 # Deskew the image
 def deskew(_img):
-    image = np.array(Image.open(_img))
+    image = _img.copy()
     
     # Check if the image is already grayscale
     if len(image.shape) == 2:  # Grayscale image
@@ -29,22 +55,25 @@ def deskew(_img):
         grayscale = rgb2gray(image)
     
     angle = determine_skew(grayscale)
-    rotated = rotate(image, angle, resize=True) * 255
+    if angle in range(-10,10):
+        rotated = rotate(image, angle, resize=True) * 255
+    else: 
+        rotated = image
     return rotated.astype(np.uint8)
 
 # Function to apply preprocessing (deskew and median filter) on a single image
 def preprocess_image(image_path, output_dir, median_filter_size=5):
     try:
-        # Apply deskew
-        deskewed_image = deskew(image_path)
         
-        # Apply median filter
-        filtered_image = median_filter(deskewed_image, size=median_filter_size)
+        clean_img = remove_small_black_noise(image_path)
+        # Apply deskew
+        deskewed_image = deskew(clean_img)
+        
         
         # Save the preprocessed image
         filename = os.path.basename(image_path)
         output_path = os.path.join(output_dir, f"processed_{filename}")
-        Image.fromarray(filtered_image).save(output_path)
+        Image.fromarray(deskewed_image).save(output_path)
         print(f"Processed: {filename}")
     except Exception as e:
         print(f"Error processing {image_path}: {e}")
@@ -70,8 +99,8 @@ def process_images_in_parallel(image_dir, output_dir, num_threads=30, median_fil
 
 # Example usage
 if __name__ == "__main__":
-    input_directory = '//home/hadi/images'  # Replace with the actual directory of your images
-    output_directory = "//home/images/preprocessed"  # Replace with where you want to save the processed images
+    input_directory = '//home/hadi/dataset-dev/plates_png'  # Replace with the actual directory of your images
+    output_directory = "preprocessed_imgs"  # Replace with where you want to save the processed images
     
     # Start processing images in parallel with 30 threads
     process_images_in_parallel(input_directory, output_directory, num_threads=30, median_filter_size=5)
