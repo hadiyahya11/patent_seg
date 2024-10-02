@@ -3,6 +3,9 @@ import cv2
 import numpy as np
 import json
 import sys
+import pathlib
+
+ALREADY_PREDICTED = "images_with_predictions.txt"
 
 def is_contour_inside(contour1, contour2):
     x1, y1, w1, h1 = cv2.boundingRect(contour1)  # inside
@@ -30,7 +33,7 @@ def process(img):
 def first_phase(img_path):
     img = cv2.imread(img_path)
     img_copy = np.copy(img)
-    
+
     processed_img = process(img_copy)
     contours, hierarchy = cv2.findContours(processed_img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     filter_contours = [ct for ct in contours if cv2.contourArea(ct) > 3000] #filter out small contours
@@ -55,10 +58,10 @@ def first_phase(img_path):
     white_background[new_y:new_y+biggest.shape[0], new_x:new_x+biggest.shape[1]] = biggest
 
     return img_copy, filter_contours, white_background
-        
+
 def second_phase(img_first_phase, img_original):
     img_copy = np.copy(img_first_phase)
-    
+
     num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(process(img_copy), connectivity=8, ltype=cv2.CV_32S)
     contours = []
     for i in range(1, num_labels):
@@ -66,10 +69,10 @@ def second_phase(img_first_phase, img_original):
         box = (x, y, w, h)
         contour = bounding_box_to_contour(box)
         contours.append(contour)
-        
+
     filtered_contours = [contour for contour in contours if cv2.contourArea(contour) > 3000]
     sorted_contours = sorted(filtered_contours, key=cv2.contourArea, reverse=True)
-        
+
     for idx, contour in enumerate(sorted_contours):
         if idx == 0:
             x, y, w, h = cv2.boundingRect(contour)
@@ -83,7 +86,7 @@ def second_phase(img_first_phase, img_original):
             if not res:
                 x, y, w, h = cv2.boundingRect(contour)
                 cv2.rectangle(img_original, (x, y), (x + w, y + h), (0, 0, 255), 2)
-            
+
     return img_copy, sorted_contours, img_original
 
 def segment(img_path):
@@ -92,7 +95,8 @@ def segment(img_path):
 
     return contours, segmented
 
-def to_json(contours, image_path):
+def to_json(contours, image_path, port):
+    image_path = pathlib.Path(image_path)
     img = cv2.imread(image_path)
     image_height, image_width, _ = img.shape
     results = []
@@ -102,7 +106,7 @@ def to_json(contours, image_path):
         y_percent = np.round((y / image_height) * 100, 2)
         width_percent = np.round((w / image_width) * 100, 2)
         height_percent = np.round((h / image_height) * 100, 2)
-        
+
         r = {
             "id": "result" + str(i),
             "type": "rectanglelabels",
@@ -121,15 +125,10 @@ def to_json(contours, image_path):
             }
         }
         results.append(r)
-    
-    image_path_json = image_path[image_path.find('GB'):]
-    image_path_json = image_path_json.replace('.tif', '.png')
-    #add the image file name into a text file of segmented images
-    with open('segmented_images.txt', 'a') as f:
-        f.write(image_path_json + '\n')
-        
-    image_path_json = "http://localhost:8081/" + image_path_json
-    
+
+    image_name = image_path.with_suffix('.png').name
+    image_path_json = f"http://localhost:{port}/{image_name}"
+
     json_entry = {
         "data": {
             "image": image_path_json
@@ -142,53 +141,81 @@ def to_json(contours, image_path):
             }
         ]
     }
-    
+
     return json_entry
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 3:
-        print("Usage: python script.py [num_images] [direction]")
-        sys.exit(1)
+    import argparse
+    import datetime
+    from tqdm import tqdm
 
-    num_images = int(sys.argv[1])
-    direction = int(sys.argv[2])
+    NOW = datetime.datetime.now(
+        datetime.timezone(
+            datetime.timedelta(hours=2)
+        )
+    ).strftime("%Y-%m-%dT%H%M")
 
-    if direction not in [1, -1]:
-        print("Direction must be either 1 (start) or -1 (end).")
-        sys.exit(1)
+    parser = argparse.ArgumentParser("Predict bounding boxes of segments in images")
+    parser.add_argument("--take-from",
+                        help="Take first or last images of directory",
+                        choices=["start", "end"],
+                        default="start")
+    parser.add_argument("--directory",
+                        default="dataset-dev/plates/",
+                        type=pathlib.Path)
+    parser.add_argument("-p", "--port",
+                        help="port on which images will be served for LayoutParser (default: 8081)",
+                        default=8081,
+                        type=int)
+    parser.add_argument("--prefix",
+                        help='only parse files starting with prefix (default: "GB.")',
+                        default="GB.")
+    parser.add_argument("-o", "--output",
+                        help="path for JSON file containing predicted boxes",
+                        default=f"{NOW}_predictions.json")
+    parser.add_argument("num_images",
+                        type=int,
+                        help="number of images for which to predict boxes")
+    args = parser.parse_args()
 
-    json_output = []
-    data_path = 'dataset-dev/plates/'
-    gb_plates = [os.path.join(data_path, _pl) for _pl in sorted(os.listdir(data_path)) if _pl.startswith("GB.")]
-    #open segmented_images.txt and remove the images that have already been segmented
+    num_images = args.num_images
+    plates = sorted([img for img in args.directory.iterdir() if img.name.startswith(args.prefix)])
+    plates = [plate.resolve().relative_to(pathlib.Path.cwd()) for plate in plates]
+
     segmented_images = []
-    if os.path.exists('segmented_images.txt'):
-        with open('segmented_images.txt', 'r') as f:
+    try:
+        with open(ALREADY_PREDICTED, 'r') as f:
             segmented_images = f.readlines()
         segmented_images = [img.strip() for img in segmented_images]
-    else:
-        with open('segmented_images.txt', 'w') as f:
+    except FileNotFoundError:
+        with open(ALREADY_PREDICTED, 'w') as f:
             pass
-    
-    gb_plates = [plate for plate in gb_plates if plate not in segmented_images] #remove the images that have already been segmented
-    
 
-    if direction == 1:
-        selected_images = gb_plates[:num_images]
+    # remove the images that have already been segmented
+    plates = [plate for plate in plates if plate.as_posix() not in segmented_images]
+
+    if args.take_from == "start":
+        selected_images = plates[:num_images]
     else:
-        selected_images = gb_plates[-num_images:]
+        selected_images = plates[-num_images:]
 
-    for img_path in selected_images:
-        contours, segmented = segment(img_path)
-        entry = to_json(contours, img_path)
+    json_output = []
+    images_with_predictions = []
+    for img_path in tqdm(selected_images):
+        contours, segmented = segment(img_path.as_posix())
+        entry = to_json(contours, img_path, args.port)
         json_output.append(entry)
-        #write img_path into segmented_images.txt
-        with open('segmented_images.txt', 'a') as f:
-            f.write(img_path + '\n')
+        images_with_predictions.append(
+            img_path.resolve().relative_to(pathlib.Path.cwd()).as_posix()
+        )
 
-    json_file_path = 'new_dataset_ml.json'
-    with open(json_file_path, 'w') as jsonfile:
+    with open(args.output, 'w') as jsonfile:
         json.dump(json_output, jsonfile, indent=2)
 
-    print(f"JSON output saved to {json_file_path}")
+    # only save once all have been predicted
+    with open(ALREADY_PREDICTED, 'a') as f:
+        f.write('\n'.join(images_with_predictions))
+        f.write('\n')
+
+    print(f"JSON output saved to {args.output}")
