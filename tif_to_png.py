@@ -1,16 +1,29 @@
 from PIL import Image
 import os
+import argparse
 
-# Define the directories
-input_dir = '/Users/mac/Desktop/patent_seg/dataset-dev/plates'
-output_dir = '/Users/mac/Desktop/patent_seg/dataset-dev/plates_png'
+parser = argparse.ArgumentParser(description='Convert .tif images to .png')
+parser.add_argument('-i',
+                    '--input-dir',
+                    help='default: dataset-dev/plates',
+                    default='dataset-dev/plates')
+parser.add_argument('-o',
+                    '--output-dir',
+                    help='default: dataset-dev/plates_png',
+                    default='dataset-dev/plates_png')
+parser.add_argument('--prefix',
+                    help='only convert files starting with PREFIX (default: "GB.")',
+                    default='GB.')
+args = parser.parse_args()
+input_dir = args.input_dir
+output_dir = args.output_dir
 
 # Create the output directory if it doesn't exist
 os.makedirs(output_dir, exist_ok=True)
 
 # Convert TIFF files to PNG
 for filename in os.listdir(input_dir):
-    if filename.endswith('.tif') and filename.startswith("GB."):
+    if filename.endswith('.tif') and filename.startswith(args.prefix):
         # Open the TIFF file
         img = Image.open(os.path.join(input_dir, filename))
         # Convert the filename from .tif to .png
