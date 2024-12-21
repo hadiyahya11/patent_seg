@@ -17,3 +17,14 @@ To annotate data with LabelStudio:
   "Object Detection with Bounding Boxes", remove the default labels and create a
   new one called `contour`. In "Data Import" upload the JSON file created by
   `predict_segments.py`.
+
+
+  ## Segmentation
+  
+  - The two phase segmentation implementation is in the notebook `contour_seg`. 
+  - It contains the code applied to annotated data and evaluation of the results
+   of the segmentation vs ground truth.
+  - To convert annotated data from label-studio to the format required, all the code 
+  is in the notebook `ls_annotations`.
+
+
